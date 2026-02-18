@@ -107,7 +107,7 @@ EventPass/
 │   ├── prisma/
 │   │   └── schema.prisma    # Database schema
 │   └── package.json
-├── frontend/                # React app (minimal UI)
+├── frontend/                # React app
 ├── idea.md
 ├── useCaseDiagram.md
 ├── sequenceDiagram.md
