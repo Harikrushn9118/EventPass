@@ -1,16 +1,19 @@
 # EventPass
 
-EventPass is a college event ticketing and entry-management backend built with TypeScript, Express, Prisma, and PostgreSQL. It supports role-based authentication, event creation, secure student registrations, and organizer check-in verification using UUID-based tickets.
+EventPass is a full-stack college event ticketing and entry-management application built with React, TypeScript, Express, Prisma, and PostgreSQL. It supports role-based authentication, event creation, secure student registrations, organizer check-in verification, and a browser-based dashboard for both students and organizers.
 
 ## What is included
 
 - JWT-based authentication for `STUDENT` and `ORGANIZER`
+- React frontend for authentication, browsing events, student tickets, and organizer operations
 - Organizer event creation
 - Event listing and event detail lookup
+- Organizer-specific event dashboard and event registration viewer
 - Event status management (`UPCOMING`, `ONGOING`, `COMPLETED`, `CANCELLED`)
 - Student registration with capacity checks
 - Organizer ticket check-in with event-level verification
 - Prisma schema and project diagrams
+- Explicit OOP entities and repository interfaces to reflect the class diagram more closely
 
 ## Project structure
 
@@ -27,6 +30,9 @@ EventPass/
 │   │   ├── routes/
 │   │   ├── services/
 │   │   └── utils/
+├── frontend/
+│   ├── src/
+│   └── package.json
 ├── README.md
 ├── idea.md
 ├── useCaseDiagram.md
@@ -37,14 +43,14 @@ EventPass/
 
 ## Setup
 
-1. Install dependencies:
+1. Install backend dependencies:
 
 ```bash
 cd backend
 npm install
 ```
 
-2. Copy the environment file and update it with your values:
+2. Copy the backend environment file and update it with your values:
 
 ```bash
 cp .env.example .env
@@ -57,13 +63,22 @@ npx prisma generate
 npx prisma db push
 ```
 
-4. Start the server:
+4. Start the backend server:
 
 ```bash
 npm run dev
 ```
 
-The API runs on `http://localhost:5000` by default.
+5. In a new terminal, install and start the frontend:
+
+```bash
+cd ../frontend
+npm install
+cp .env.example .env
+npm run dev
+```
+
+The API runs on `http://localhost:5000` by default and the frontend runs on Vite's default local port.
 
 ## Main API endpoints
 
@@ -75,7 +90,9 @@ The API runs on `http://localhost:5000` by default.
 ### Events
 
 - `GET /api/events`
+- `GET /api/events/my-events`
 - `GET /api/events/:eventId`
+- `GET /api/events/:eventId/registrations`
 - `POST /api/events`
 - `PATCH /api/events/:eventId/status`
 
@@ -130,4 +147,4 @@ The API runs on `http://localhost:5000` by default.
 ## Notes
 
 - Diagram files were left unchanged.
-- EventPass currently contains the backend implementation. If your grading criteria expects a frontend, that would be the next major addition.
+- The backend uses a controller-service-repository structure with domain classes and repository interfaces to demonstrate OOP and clean architecture.
