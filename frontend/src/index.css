@@ -1,0 +1,63 @@
+:root {
+  --bg: #f5efe6;
+  --bg-accent: #fffaf2;
+  --ink: #1b2434;
+  --muted: #6f6a65;
+  --accent: #c15d2d;
+  --border-soft: rgba(139, 124, 106, 0.22);
+  --border-strong: rgba(112, 95, 75, 0.28);
+  --font-body: "Avenir Next", "Trebuchet MS", "Segoe UI", sans-serif;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", serif;
+
+  font-family: var(--font-body);
+  line-height: 1.5;
+  font-weight: 400;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(255, 213, 153, 0.22), transparent 22%),
+    radial-gradient(circle at top right, rgba(104, 159, 255, 0.14), transparent 26%),
+    linear-gradient(180deg, #f8f2e8 0%, #f5efe6 44%, #f0ebe5 100%);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+#root {
+  min-height: 100vh;
+}
