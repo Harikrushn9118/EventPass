@@ -20,8 +20,21 @@ export const getEvents = asyncHandler(async (req: AuthRequest, res: Response) =>
   res.status(200).json({ success: true, data: result });
 });
 
+export const getMyEvents = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const result = await eventService.getOrganizerEvents(req.user!.id);
+  res.status(200).json({ success: true, data: result });
+});
+
 export const getEventById = asyncHandler(async (req: AuthRequest, res: Response) => {
   const result = await eventService.getEventDetails(validateEventId(req.params.eventId));
+  res.status(200).json({ success: true, data: result });
+});
+
+export const getEventRegistrations = asyncHandler(async (req: AuthRequest, res: Response) => {
+  const result = await eventService.getEventRegistrations(
+    validateEventId(req.params.eventId),
+    req.user!.id
+  );
   res.status(200).json({ success: true, data: result });
 });
 

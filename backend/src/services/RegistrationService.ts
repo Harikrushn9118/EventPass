@@ -2,14 +2,19 @@ import { RegistrationRepository } from '../repositories/RegistrationRepository';
 import { EventService } from '../services/EventService';
 import { v4 as uuidv4 } from 'uuid';
 import { HttpError } from '../utils/httpError';
+import { IRegistrationRepository } from '../repositories/interfaces';
+import { RegistrationEntity } from '../models/registration';
 
 export class RegistrationService {
-  private registrationRepository: RegistrationRepository;
+  private registrationRepository: IRegistrationRepository;
   private eventService: EventService;
 
-  constructor() {
-    this.registrationRepository = new RegistrationRepository();
-    this.eventService = new EventService();
+  constructor(
+    registrationRepository: IRegistrationRepository = new RegistrationRepository(),
+    eventService: EventService = new EventService()
+  ) {
+    this.registrationRepository = registrationRepository;
+    this.eventService = eventService;
   }
 
   async registerForEvent(userId: string, eventId: string) {
@@ -42,17 +47,19 @@ export class RegistrationService {
       throw new HttpError('Invalid ticket UUID', 404);
     }
 
-    if (registration.eventId !== eventId) {
+    const registrationEntity = new RegistrationEntity(registration);
+
+    if (!registrationEntity.belongsToEvent(eventId)) {
       throw new HttpError('Ticket does not belong to the selected event', 400);
     }
 
     // Validate if the correct organizer is checking them in
-    if (registration.event.organizerId !== organizerId) {
+    if (!registrationEntity.canBeCheckedInBy(organizerId)) {
       throw new HttpError('Unauthorized down to event level', 403);
     }
 
     // Check if already attended
-    if (registration.attended) {
+    if (registrationEntity.attended) {
       throw new HttpError('Ticket has already been used', 400);
     }
 

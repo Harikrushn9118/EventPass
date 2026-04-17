@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
+import { IRegistrationRepository } from './interfaces';
 
-export class RegistrationRepository {
+export class RegistrationRepository implements IRegistrationRepository {
   async createRegistration(userId: string, eventId: string, ticketUUID: string) {
     return await prisma.registration.create({
       data: {

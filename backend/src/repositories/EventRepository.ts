@@ -1,6 +1,7 @@
 import { prisma } from '../lib/prisma';
+import { IEventRepository } from './interfaces';
 
-export class EventRepository {
+export class EventRepository implements IEventRepository {
   async create(data: any) {
     return await prisma.event.create({
       data,
@@ -28,6 +29,34 @@ export class EventRepository {
     return await prisma.event.update({
       where: { id: eventId },
       data: { status },
+    });
+  }
+
+  async findByOrganizerId(organizerId: string) {
+    return await prisma.event.findMany({
+      where: { organizerId },
+      orderBy: { date: 'asc' },
+      include: {
+        _count: {
+          select: { registrations: true },
+        },
+      },
+    });
+  }
+
+  async findRegistrationsForEvent(eventId: string) {
+    return await prisma.registration.findMany({
+      where: { eventId },
+      orderBy: { registeredAt: 'desc' },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+          },
+        },
+      },
     });
   }
 }

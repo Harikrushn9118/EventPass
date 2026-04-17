@@ -1,7 +1,7 @@
-import { User, Role } from '../models/user';
+import { IUserRepository } from './interfaces';
 import { prisma } from '../lib/prisma';
 
-export class UserRepository {
+export class UserRepository implements IUserRepository {
   async findByEmail(email: string) {
     return await prisma.user.findUnique({
       where: { email },
@@ -14,7 +14,7 @@ export class UserRepository {
     });
   }
 
-  async create(user: Omit<User, 'id' | 'createdAt' | 'updatedAt'>) {
+  async create(user: { name: string; email: string; password: string; role: 'STUDENT' | 'ORGANIZER' }) {
     return await prisma.user.create({
       data: {
         name: user.name,
