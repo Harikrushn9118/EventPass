@@ -1,4 +1,6 @@
 import { EventRepository } from '../repositories/EventRepository';
+import { EventStatus } from '@prisma/client';
+import { HttpError } from '../utils/httpError';
 
 export class EventService {
   private eventRepository: EventRepository;
@@ -21,9 +23,7 @@ export class EventService {
   async getEventDetails(eventId: string) {
     const event = await this.eventRepository.findById(eventId);
     if (!event) {
-      const error: any = new Error('Event not found');
-      error.statusCode = 404;
-      throw error;
+      throw new HttpError('Event not found', 404);
     }
     return event;
   }
@@ -31,9 +31,7 @@ export class EventService {
   async checkCapacity(eventId: string): Promise<boolean> {
     const event = await this.getEventDetails(eventId);
     if (event.status !== 'UPCOMING') {
-      const error: any = new Error('Event is not open for registration');
-      error.statusCode = 400;
-      throw error;
+      throw new HttpError('Event is not open for registration', 400);
     }
     
     const currentRegistrations = event._count.registrations;
@@ -42,5 +40,15 @@ export class EventService {
     }
     
     return true; // Seats available
+  }
+
+  async updateEventStatus(eventId: string, status: EventStatus, organizerId: string) {
+    const event = await this.getEventDetails(eventId);
+
+    if (event.organizerId !== organizerId) {
+      throw new HttpError('You can only update events that you created', 403);
+    }
+
+    return this.eventRepository.updateStatus(eventId, status);
   }
 }

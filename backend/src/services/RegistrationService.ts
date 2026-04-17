@@ -1,6 +1,7 @@
 import { RegistrationRepository } from '../repositories/RegistrationRepository';
 import { EventService } from '../services/EventService';
 import { v4 as uuidv4 } from 'uuid';
+import { HttpError } from '../utils/httpError';
 
 export class RegistrationService {
   private registrationRepository: RegistrationRepository;
@@ -15,9 +16,7 @@ export class RegistrationService {
     // 1. Check Capacity and Status Guard
     const hasCapacity = await this.eventService.checkCapacity(eventId);
     if (!hasCapacity) {
-      const error: any = new Error('Event is fully booked');
-      error.statusCode = 400;
-      throw error;
+      throw new HttpError('Event is fully booked', 400);
     }
 
     // 2. Generate unique UUID based ticket
@@ -29,36 +28,32 @@ export class RegistrationService {
       return registration;
     } catch (err: any) {
       if (err.code === 'P2002') { // Prisma Unique constraint failed
-        const error: any = new Error('Already registered for this event');
-        error.statusCode = 400;
-        throw error;
+        throw new HttpError('Already registered for this event', 400);
       }
       throw err;
     }
   }
 
-  async verifyAndCheckInTicket(ticketUUID: string, organizerId: string) {
+  async verifyAndCheckInTicket(ticketUUID: string, eventId: string, organizerId: string) {
     const registration = await this.registrationRepository.findRegistrationByUUID(ticketUUID);
     
     // Validate existence
     if (!registration) {
-      const error: any = new Error('Invalid ticket UUID');
-      error.statusCode = 404;
-      throw error;
+      throw new HttpError('Invalid ticket UUID', 404);
+    }
+
+    if (registration.eventId !== eventId) {
+      throw new HttpError('Ticket does not belong to the selected event', 400);
     }
 
     // Validate if the correct organizer is checking them in
     if (registration.event.organizerId !== organizerId) {
-      const error: any = new Error('Unauthorized down to event level');
-      error.statusCode = 403;
-      throw error;
+      throw new HttpError('Unauthorized down to event level', 403);
     }
 
     // Check if already attended
     if (registration.attended) {
-      const error: any = new Error('Ticket has already been used');
-      error.statusCode = 400;
-      throw error;
+      throw new HttpError('Ticket has already been used', 400);
     }
 
     // Mark as attended
