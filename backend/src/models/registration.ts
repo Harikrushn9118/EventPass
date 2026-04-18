@@ -1,3 +1,8 @@
+/**
+ * RegistrationEntity encapsulates check-in validation logic.
+ * Demonstrates Encapsulation — the rules for ticket validation
+ * are contained within the entity, not scattered across services.
+ */
 export interface RegistrationRecord {
   id: string;
   ticketUUID: string;
@@ -21,11 +26,22 @@ export class RegistrationEntity {
     return this.registration.attended;
   }
 
-  belongsToEvent(eventId: string) {
+  get ticketUUID() {
+    return this.registration.ticketUUID;
+  }
+
+  /** Check if this ticket belongs to a specific event */
+  belongsToEvent(eventId: string): boolean {
     return this.registration.eventId === eventId;
   }
 
-  canBeCheckedInBy(organizerId: string) {
+  /** Verify if the organizer owns the event this ticket is for */
+  canBeCheckedInBy(organizerId: string): boolean {
     return this.registration.event?.organizerId === organizerId;
+  }
+
+  /** Check if the attendee has already been checked in */
+  isAlreadyAttended(): boolean {
+    return this.registration.attended;
   }
 }
