@@ -11,6 +11,11 @@ export class EventRepository implements IEventRepository {
   async findAll() {
     return await prisma.event.findMany({
       orderBy: { createdAt: 'desc' },
+      include: {
+        _count: {
+          select: { registrations: true },
+        },
+      },
     });
   }
 
