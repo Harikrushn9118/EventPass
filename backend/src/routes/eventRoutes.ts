@@ -14,12 +14,12 @@ const router = Router();
 
 // Public browsing
 router.get('/', getEvents);
+router.get('/my-events', authenticate, authorizeRole('ORGANIZER' as Role), getMyEvents);
 router.get('/:eventId', getEventById);
 
 router.use(authenticate);
 
 // Organizer-only management
-router.get('/my-events', authorizeRole('ORGANIZER' as Role), getMyEvents);
 router.get('/:eventId/registrations', authorizeRole('ORGANIZER' as Role), getEventRegistrations);
 
 router.post('/', authorizeRole('ORGANIZER' as Role), createEvent);
