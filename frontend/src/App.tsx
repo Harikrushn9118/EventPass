@@ -389,7 +389,7 @@ function App() {
       <section className="hero-stage">
         <div className="hero-copy">
           <p className="section-tag">Ticketing, capacity, and check-in in one flow</p>
-          <h2 className="hero-title">A sharper frontend for college events that feels designed, not generated.</h2>
+          <h2 className="hero-title">A cleaner way to run college events from registration to check-in.</h2>
           <p className="hero-text">
             EventPass gives students a clear path from discovery to ticket ownership and gives organizers a control
             room for seat management, registrations, and gate entry verification.
