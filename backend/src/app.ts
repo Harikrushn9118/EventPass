@@ -2,6 +2,7 @@ import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { errorHandler } from './middlewares/errorHandler';
+import { setupDefaultListeners } from './utils/eventEmitter';
 
 dotenv.config();
 
@@ -9,6 +10,9 @@ const app: Express = express();
 
 app.use(cors());
 app.use(express.json());
+
+// Initialize Observer Pattern listeners (audit logging)
+setupDefaultListeners();
 
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'OK', message: 'EventPass API is running' });
