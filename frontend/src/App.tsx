@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useState, useCallback } from 'react';
+import { useDeferredValue, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import './App.css';
 import type {
@@ -13,8 +13,6 @@ import type {
 } from './types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:5000/api';
-
-type Page = 'events' | 'tickets' | 'organizer' | 'checkin';
 
 const defaultRegisterForm: RegisterFormState = {
   name: '',
@@ -38,37 +36,21 @@ const defaultEventForm = {
 
 const eventStatusOptions: EventStatus[] = ['UPCOMING', 'ONGOING', 'COMPLETED', 'CANCELLED'];
 
-/* ===== HELPER: Format date nicely ===== */
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
+const formatDate = (value: string) =>
+  new Date(value).toLocaleString([], {
+    dateStyle: 'medium',
+    timeStyle: 'short',
   });
-}
 
-/* ===== HELPER: Get initials ===== */
-function getInitials(name: string): string {
-  return name
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
-}
+const getAvailableSeats = (event: EventRecord) =>
+  event.availableSeats ?? Math.max(event.maxCapacity - (event._count?.registrations ?? 0), 0);
 
-/* ===== HELPER: Seat status ===== */
-function getSeatStatus(available: number, max: number) {
-  const ratio = available / max;
-  if (ratio <= 0) return { class: 'full', label: 'Full' };
-  if (ratio <= 0.2) return { class: 'limited', label: `${available} left` };
-  return { class: 'available', label: `${available} left` };
-}
+const getCapacityPercentage = (event: EventRecord) => {
+  const sold = event.maxCapacity - getAvailableSeats(event);
+  return Math.min(100, Math.max(0, (sold / event.maxCapacity) * 100));
+};
 
 function App() {
-  /* ---- State ---- */
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [tickets, setTickets] = useState<TicketRecord[]>([]);
   const [myEvents, setMyEvents] = useState<EventRecord[]>([]);
@@ -80,9 +62,8 @@ function App() {
   const [selectedCheckInEventId, setSelectedCheckInEventId] = useState('');
   const [ticketUUID, setTicketUUID] = useState('');
   const [search, setSearch] = useState('');
-  const [toast, setToast] = useState<{ message: string; visible: boolean }>({ message: '', visible: false });
+  const [message, setMessage] = useState('Welcome to EventPass. Sign in to start managing registrations and entry.');
   const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState<Page>('events');
   const [session, setSession] = useState<SessionState | null>(() => {
     const stored = localStorage.getItem('eventpass-session');
     return stored ? (JSON.parse(stored) as SessionState) : null;
@@ -90,13 +71,50 @@ function App() {
 
   const deferredSearch = useDeferredValue(search);
 
-  /* ---- Toast helper ---- */
-  const showToast = useCallback((message: string) => {
-    setToast({ message, visible: true });
-    setTimeout(() => setToast((t) => ({ ...t, visible: false })), 4000);
-  }, []);
+  useEffect(() => {
+    const token = session?.token;
 
-  /* ---- API helper ---- */
+    void (async () => {
+      try {
+        setLoading(true);
+        const data = await apiRequest<EventRecord[]>('/events', {}, token);
+        setEvents(data);
+      } catch (error) {
+        setMessage((error as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, [session?.token]);
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        if (session.user.role === 'STUDENT') {
+          const data = await apiRequest<TicketRecord[]>('/registrations/my-tickets', {}, session.token);
+          setTickets(data);
+        }
+
+        if (session.user.role === 'ORGANIZER') {
+          const data = await apiRequest<EventRecord[]>('/events/my-events', {}, session.token);
+          setMyEvents(data);
+          setStatusDrafts(
+            Object.fromEntries(data.map((event) => [event.id, event.status])) as Record<string, EventStatus>
+          );
+          if (!selectedCheckInEventId && data[0]) {
+            setSelectedCheckInEventId(data[0].id);
+          }
+        }
+      } catch (error) {
+        setMessage((error as Error).message);
+      }
+    })();
+  }, [selectedCheckInEventId, session]);
+
   async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string) {
     const response = await fetch(`${API_BASE_URL}${path}`, {
       ...options,
@@ -115,90 +133,76 @@ function App() {
     return payload.data as T;
   }
 
-  /* ---- Data loaders ---- */
-  const loadEvents = useCallback(async () => {
+  async function loadEvents() {
     try {
       setLoading(true);
       const token = session?.token;
       const data = await apiRequest<EventRecord[]>('/events', {}, token);
       setEvents(data);
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
-  }, [session?.token, showToast]);
+  }
 
-  const loadTickets = useCallback(
-    async (token: string) => {
-      try {
-        const data = await apiRequest<TicketRecord[]>('/registrations/my-tickets', {}, token);
-        setTickets(data);
-      } catch (error) {
-        showToast((error as Error).message);
+  async function loadTickets(token: string) {
+    try {
+      const data = await apiRequest<TicketRecord[]>('/registrations/my-tickets', {}, token);
+      setTickets(data);
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
+
+  async function loadMyEvents(token: string) {
+    try {
+      const data = await apiRequest<EventRecord[]>('/events/my-events', {}, token);
+      setMyEvents(data);
+      setStatusDrafts(
+        Object.fromEntries(data.map((event) => [event.id, event.status])) as Record<string, EventStatus>
+      );
+      if (!selectedCheckInEventId && data[0]) {
+        setSelectedCheckInEventId(data[0].id);
       }
-    },
-    [showToast]
-  );
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
 
-  const loadMyEvents = useCallback(
-    async (token: string) => {
-      try {
-        const data = await apiRequest<EventRecord[]>('/events/my-events', {}, token);
-        setMyEvents(data);
-        setStatusDrafts(
-          Object.fromEntries(data.map((event) => [event.id, event.status])) as Record<string, EventStatus>
-        );
-        if (!selectedCheckInEventId && data[0]) {
-          setSelectedCheckInEventId(data[0].id);
-        }
-      } catch (error) {
-        showToast((error as Error).message);
-      }
-    },
-    [selectedCheckInEventId, showToast]
-  );
+  async function loadRegistrations(eventId: string) {
+    if (!session) {
+      return;
+    }
 
-  const loadRegistrations = useCallback(
-    async (eventId: string) => {
-      if (!session) return;
-      try {
-        const data = await apiRequest<EventRegistration[]>(`/events/${eventId}/registrations`, {}, session.token);
-        setRegistrationsByEvent((current) => ({ ...current, [eventId]: data }));
-      } catch (error) {
-        showToast((error as Error).message);
-      }
-    },
-    [session, showToast]
-  );
+    try {
+      const data = await apiRequest<EventRegistration[]>(`/events/${eventId}/registrations`, {}, session.token);
+      setRegistrationsByEvent((current) => ({
+        ...current,
+        [eventId]: data,
+      }));
+    } catch (error) {
+      setMessage((error as Error).message);
+    }
+  }
 
-  /* ---- Effects ---- */
-  useEffect(() => {
-    void loadEvents();
-  }, [loadEvents]);
-
-  useEffect(() => {
-    if (!session) return;
-    if (session.user.role === 'STUDENT') void loadTickets(session.token);
-    if (session.user.role === 'ORGANIZER') void loadMyEvents(session.token);
-  }, [session, loadTickets, loadMyEvents]);
-
-  /* ---- Handlers ---- */
   async function handleRegisterSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     try {
       setLoading(true);
       const data = await apiRequest<SessionState>('/auth/register', {
         method: 'POST',
         body: JSON.stringify(registerForm),
       });
+
       setSession(data);
       localStorage.setItem('eventpass-session', JSON.stringify(data));
       setRegisterForm(defaultRegisterForm);
-      showToast(`Welcome, ${data.user.name}! Account created successfully.`);
+      setMessage(`Account created for ${data.user.name}.`);
       await loadEvents();
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -206,19 +210,21 @@ function App() {
 
   async function handleLoginSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
     try {
       setLoading(true);
       const data = await apiRequest<SessionState>('/auth/login', {
         method: 'POST',
         body: JSON.stringify(loginForm),
       });
+
       setSession(data);
       localStorage.setItem('eventpass-session', JSON.stringify(data));
       setLoginForm(defaultLoginForm);
-      showToast(`Welcome back, ${data.user.name}!`);
+      setMessage(`Welcome back, ${data.user.name}.`);
       await loadEvents();
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -226,16 +232,24 @@ function App() {
 
   async function handleRegisterForEvent(eventId: string) {
     if (!session) {
-      showToast('Please sign in as a student to register.');
+      setMessage('Sign in as a student to register for an event.');
       return;
     }
+
     try {
       setLoading(true);
-      await apiRequest('/registrations/register', { method: 'POST', body: JSON.stringify({ eventId }) }, session.token);
-      showToast('🎉 Registered! Check your tickets for the digital pass.');
+      await apiRequest(
+        '/registrations/register',
+        {
+          method: 'POST',
+          body: JSON.stringify({ eventId }),
+        },
+        session.token
+      );
+      setMessage('Registration successful. Your ticket is now in My Tickets.');
       await Promise.all([loadEvents(), loadTickets(session.token)]);
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -243,7 +257,10 @@ function App() {
 
   async function handleCreateEvent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session) return;
+    if (!session) {
+      return;
+    }
+
     try {
       setLoading(true);
       await apiRequest(
@@ -259,28 +276,34 @@ function App() {
         session.token
       );
       setEventForm(defaultEventForm);
-      showToast('✅ Event created successfully!');
+      setMessage('Event created successfully.');
       await Promise.all([loadEvents(), loadMyEvents(session.token)]);
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
   }
 
   async function handleStatusUpdate(eventId: string) {
-    if (!session) return;
+    if (!session) {
+      return;
+    }
+
     try {
       setLoading(true);
       await apiRequest(
         `/events/${eventId}/status`,
-        { method: 'PATCH', body: JSON.stringify({ status: statusDrafts[eventId] }) },
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ status: statusDrafts[eventId] }),
+        },
         session.token
       );
-      showToast('Event status updated.');
+      setMessage('Event status updated.');
       await Promise.all([loadEvents(), loadMyEvents(session.token)]);
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -288,19 +311,28 @@ function App() {
 
   async function handleCheckIn(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!session || !selectedCheckInEventId) return;
+    if (!session || !selectedCheckInEventId) {
+      return;
+    }
+
     try {
       setLoading(true);
       await apiRequest(
         '/registrations/check-in',
-        { method: 'POST', body: JSON.stringify({ eventId: selectedCheckInEventId, ticketUUID }) },
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            eventId: selectedCheckInEventId,
+            ticketUUID,
+          }),
+        },
         session.token
       );
       setTicketUUID('');
-      showToast('✅ Check-in successful!');
+      setMessage('Ticket checked in successfully.');
       await loadRegistrations(selectedCheckInEventId);
     } catch (error) {
-      showToast((error as Error).message);
+      setMessage((error as Error).message);
     } finally {
       setLoading(false);
     }
@@ -312,638 +344,586 @@ function App() {
     setMyEvents([]);
     setRegistrationsByEvent({});
     localStorage.removeItem('eventpass-session');
-    setPage('events');
-    showToast('Signed out successfully.');
+    setMessage('Session cleared.');
   }
 
-  /* ---- Filtered events ---- */
   const filteredEvents = events.filter((event) => {
     const query = deferredSearch.trim().toLowerCase();
-    if (!query) return true;
+    if (!query) {
+      return true;
+    }
+
     return [event.title, event.venue, event.description].join(' ').toLowerCase().includes(query);
   });
 
-  /* ---- Navigation tabs ---- */
-  const navTabs: { id: Page; label: string; icon: string; show: boolean }[] = [
-    { id: 'events', label: 'Events', icon: '🎪', show: true },
-    { id: 'tickets', label: 'My Tickets', icon: '🎫', show: session?.user.role === 'STUDENT' },
-    { id: 'organizer', label: 'Dashboard', icon: '⚙️', show: session?.user.role === 'ORGANIZER' },
-    { id: 'checkin', label: 'Check-In', icon: '✅', show: session?.user.role === 'ORGANIZER' },
-  ];
+  const upcomingEvents = events.filter((event) => event.status === 'UPCOMING').length;
+  const bookedSeats = events.reduce((sum, event) => sum + (event.maxCapacity - getAvailableSeats(event)), 0);
+  const registrationsLoaded = Object.values(registrationsByEvent).reduce((sum, group) => sum + group.length, 0);
+  const spotlightEvent = filteredEvents[0];
 
-  const visibleTabs = navTabs.filter((t) => t.show);
-
-  /* ============================== RENDER ============================== */
   return (
-    <div className="app-shell">
-      {/* Loading bar */}
-      {loading && <div className="loading-bar" />}
+    <div className="page-shell">
+      <div className="ambient ambient-left" />
+      <div className="ambient ambient-right" />
 
-      {/* ---- NAVBAR ---- */}
-      <nav className="navbar" id="main-nav">
-        <div className="navbar-brand">
-          <span className="logo-icon">🎫</span>
-          <span className="brand-text">EventPass</span>
+      <header className="topbar">
+        <div className="brand-lockup">
+          <span className="brand-mark">EP</span>
+          <div>
+            <p className="micro-label">EventPass</p>
+            <h1 className="brand-title">Campus event command center</h1>
+          </div>
         </div>
 
-        <div className="navbar-nav">
-          {visibleTabs.map((tab) => (
-            <button
-              key={tab.id}
-              id={`nav-${tab.id}`}
-              className={`nav-tab ${page === tab.id ? 'active' : ''}`}
-              onClick={() => setPage(tab.id)}
-            >
-              {tab.icon} {tab.label}
-            </button>
-          ))}
+        <div className="topbar-actions">
+          <div className="session-flag">
+            <span className="micro-label">Session</span>
+            <strong>{session ? `${session.user.name} · ${session.user.role}` : 'Guest mode'}</strong>
+          </div>
+          <button className="ghost-button" onClick={() => void loadEvents()} disabled={loading}>
+            Refresh live feed
+          </button>
+        </div>
+      </header>
+
+      <section className="hero-stage">
+        <div className="hero-copy">
+          <p className="section-tag">Ticketing, capacity, and check-in in one flow</p>
+          <h2 className="hero-title">A sharper frontend for college events that feels designed, not generated.</h2>
+          <p className="hero-text">
+            EventPass gives students a clear path from discovery to ticket ownership and gives organizers a control
+            room for seat management, registrations, and gate entry verification.
+          </p>
+          <div className="hero-pill-row">
+            <span>Role-based access</span>
+            <span>Secure UUID passes</span>
+            <span>Live seat visibility</span>
+            <span>Organizer check-in console</span>
+          </div>
         </div>
 
-        <div className="navbar-actions">
-          {session ? (
+        <aside className="spotlight-card">
+          <p className="micro-label">Spotlight event</p>
+          {spotlightEvent ? (
             <>
-              <div className="user-badge">
-                <div className="user-avatar">{getInitials(session.user.name)}</div>
-                <div className="user-info">
-                  <span className="user-name">{session.user.name}</span>
-                  <span className="user-role">{session.user.role}</span>
+              <div className="spotlight-topline">
+                <span className={`status-chip status-${spotlightEvent.status.toLowerCase()}`}>{spotlightEvent.status}</span>
+                <span>{getAvailableSeats(spotlightEvent)} seats left</span>
+              </div>
+              <h3>{spotlightEvent.title}</h3>
+              <p>{spotlightEvent.description}</p>
+              <div className="spotlight-meta">
+                <div>
+                  <span className="micro-label">When</span>
+                  <strong>{formatDate(spotlightEvent.date)}</strong>
+                </div>
+                <div>
+                  <span className="micro-label">Where</span>
+                  <strong>{spotlightEvent.venue}</strong>
                 </div>
               </div>
-              <button className="btn btn-ghost btn-sm" id="logout-btn" onClick={handleLogout}>
-                Sign out
-              </button>
+              <div className="capacity-meter">
+                <div className="capacity-track">
+                  <span style={{ width: `${getCapacityPercentage(spotlightEvent)}%` }} />
+                </div>
+                <div className="capacity-caption">
+                  <span>{spotlightEvent.maxCapacity - getAvailableSeats(spotlightEvent)} booked</span>
+                  <span>{spotlightEvent.maxCapacity} total</span>
+                </div>
+              </div>
             </>
           ) : (
-            <button className="btn btn-primary btn-sm" onClick={() => setPage('events')}>
-              Get Started
-            </button>
+            <p className="empty-state">No events yet. Create the first campus experience from the organizer panel.</p>
           )}
+        </aside>
+      </section>
+
+      <section className="metric-ribbon">
+        <article className="metric-card">
+          <span className="metric-label">Visible events</span>
+          <strong>{events.length}</strong>
+          <p>Public event feed available to students and guests.</p>
+        </article>
+        <article className="metric-card">
+          <span className="metric-label">Upcoming now</span>
+          <strong>{upcomingEvents}</strong>
+          <p>Events currently open for fresh registrations.</p>
+        </article>
+        <article className="metric-card">
+          <span className="metric-label">Tickets in account</span>
+          <strong>{tickets.length}</strong>
+          <p>Your personal event passes and attendance trail.</p>
+        </article>
+        <article className="metric-card">
+          <span className="metric-label">Loaded registrations</span>
+          <strong>{registrationsLoaded}</strong>
+          <p>Organizer-side attendee records currently loaded.</p>
+        </article>
+        <article className="metric-card metric-card-accent">
+          <span className="metric-label">Booked seats</span>
+          <strong>{bookedSeats}</strong>
+          <p>Total registrations captured across the live feed.</p>
+        </article>
+      </section>
+
+      <section className="message-banner">
+        <span className={loading ? 'signal-dot active' : 'signal-dot'} />
+        <div>
+          <span className="micro-label">System message</span>
+          <p>{message}</p>
         </div>
-      </nav>
+      </section>
 
-      {/* Mobile nav */}
-      <div className="mobile-nav">
-        {visibleTabs.map((tab) => (
-          <button
-            key={tab.id}
-            className={`nav-tab ${page === tab.id ? 'active' : ''}`}
-            onClick={() => setPage(tab.id)}
-          >
-            {tab.icon} {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* ---- MAIN CONTENT ---- */}
-      <main className="page-content">
-        {/* === EVENTS PAGE === */}
-        {page === 'events' && (
-          <>
-            {/* Hero */}
-            <section className="hero" id="hero-section">
-              <div className="hero-eyebrow">🎓 College Event Ticketing Platform</div>
-              <h1>
-                Discover events.
-                <br />
-                <span className="gradient-text">Register instantly.</span>
-              </h1>
-              <p className="hero-description">
-                Browse upcoming college events, register with a single click, and receive a secure UUID-based digital
-                pass. Organizers can create events, manage capacity, and verify entry in real-time.
-              </p>
-              <div className="hero-stats">
-                <div className="hero-stat">
-                  <span className="hero-stat-value">{events.length}</span>
-                  <span className="hero-stat-label">Total Events</span>
-                </div>
-                <div className="hero-stat">
-                  <span className="hero-stat-value">{events.filter((e) => e.status === 'UPCOMING').length}</span>
-                  <span className="hero-stat-label">Upcoming</span>
-                </div>
-                {session?.user.role === 'STUDENT' && (
-                  <div className="hero-stat">
-                    <span className="hero-stat-value">{tickets.length}</span>
-                    <span className="hero-stat-label">My Tickets</span>
-                  </div>
-                )}
-                {session?.user.role === 'ORGANIZER' && (
-                  <div className="hero-stat">
-                    <span className="hero-stat-value">{myEvents.length}</span>
-                    <span className="hero-stat-label">My Events</span>
-                  </div>
-                )}
+      <main className="app-grid">
+        <section className="main-column">
+          <section className="panel event-panel">
+            <div className="panel-header row-layout">
+              <div>
+                <p className="section-tag">Discover events</p>
+                <h3 className="panel-title">Browse the live campus lineup</h3>
               </div>
-            </section>
+              <label className="search-shell">
+                <span className="micro-label">Search</span>
+                <input
+                  className="search-input"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Hackathon, auditorium, workshop..."
+                />
+              </label>
+            </div>
 
-            {/* Auth section (guest only) */}
-            {!session && (
-              <section className="auth-section" id="auth-section">
-                <div className="section-header">
-                  <div>
-                    <h2>
-                      <span className="section-icon">🔐</span> Get Started
-                    </h2>
-                    <p className="section-subtitle">Create an account or sign in to register for events</p>
-                  </div>
-                </div>
-
-                <div className="auth-container">
-                  {/* Register */}
-                  <div className="auth-card" id="register-card">
-                    <h3>Create Account</h3>
-                    <p className="auth-subtitle">New here? Sign up in seconds.</p>
-                    <form className="form-stack" onSubmit={handleRegisterSubmit} id="register-form">
-                      <div className="form-group">
-                        <label className="form-label">Full Name</label>
-                        <input
-                          className="form-input"
-                          id="register-name"
-                          value={registerForm.name}
-                          onChange={(e) => setRegisterForm((c) => ({ ...c, name: e.target.value }))}
-                          placeholder="e.g. Aarav Sharma"
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Email</label>
-                        <input
-                          className="form-input"
-                          id="register-email"
-                          value={registerForm.email}
-                          onChange={(e) => setRegisterForm((c) => ({ ...c, email: e.target.value }))}
-                          placeholder="you@college.edu"
-                          type="email"
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Password</label>
-                        <input
-                          className="form-input"
-                          id="register-password"
-                          value={registerForm.password}
-                          onChange={(e) => setRegisterForm((c) => ({ ...c, password: e.target.value }))}
-                          placeholder="Min 6 characters"
-                          type="password"
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Role</label>
-                        <select
-                          className="form-select"
-                          id="register-role"
-                          value={registerForm.role}
-                          onChange={(e) => setRegisterForm((c) => ({ ...c, role: e.target.value as Role }))}
-                        >
-                          <option value="STUDENT">Student</option>
-                          <option value="ORGANIZER">Organizer</option>
-                        </select>
-                      </div>
-                      <button className="btn btn-primary btn-full" id="register-submit" disabled={loading}>
-                        Create Account
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* Login */}
-                  <div className="auth-card" id="login-card">
-                    <h3>Welcome Back</h3>
-                    <p className="auth-subtitle">Sign in to your account.</p>
-                    <form className="form-stack" onSubmit={handleLoginSubmit} id="login-form">
-                      <div className="form-group">
-                        <label className="form-label">Email</label>
-                        <input
-                          className="form-input"
-                          id="login-email"
-                          value={loginForm.email}
-                          onChange={(e) => setLoginForm((c) => ({ ...c, email: e.target.value }))}
-                          placeholder="you@college.edu"
-                          type="email"
-                          required
-                        />
-                      </div>
-                      <div className="form-group">
-                        <label className="form-label">Password</label>
-                        <input
-                          className="form-input"
-                          id="login-password"
-                          value={loginForm.password}
-                          onChange={(e) => setLoginForm((c) => ({ ...c, password: e.target.value }))}
-                          placeholder="Enter your password"
-                          type="password"
-                          required
-                        />
-                      </div>
-                      <button className="btn btn-primary btn-full" id="login-submit" disabled={loading}>
-                        Sign In
-                      </button>
-                    </form>
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {/* Signed-in session display */}
-            {session && (
-              <section className="auth-section">
-                <div className="session-display" id="session-card">
-                  <div className="session-info">
-                    <div className="session-avatar">{getInitials(session.user.name)}</div>
-                    <div className="session-details">
-                      <h3>{session.user.name}</h3>
-                      <p>{session.user.email}</p>
-                    </div>
-                    <span className="session-role-badge">{session.user.role}</span>
-                  </div>
-                  <button className="btn btn-ghost btn-sm" onClick={handleLogout}>
-                    Sign Out
-                  </button>
-                </div>
-              </section>
-            )}
-
-            {/* Event Feed */}
-            <section className="events-section" id="events-section">
-              <div className="section-header">
-                <div>
-                  <h2>
-                    <span className="section-icon">🎪</span> Event Feed
-                  </h2>
-                  <p className="section-subtitle">Browse open events and register with one click</p>
-                </div>
-                <div className="search-bar">
-                  <span className="search-icon">🔍</span>
-                  <input
-                    className="form-input"
-                    id="search-events"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search events..."
-                  />
-                </div>
-              </div>
-
+            <div className="event-grid">
               {filteredEvents.length === 0 ? (
-                <div className="empty-state">
-                  <div className="empty-icon">🎭</div>
-                  <h4>No events found</h4>
-                  <p>Try adjusting your search or check back later for new events.</p>
+                <div className="empty-panel">
+                  <p className="section-tag">No matches</p>
+                  <h4>Try another search term</h4>
+                  <p>The feed is active, but nothing matched your current query.</p>
                 </div>
               ) : (
-                <div className="event-grid">
-                  {filteredEvents.map((event, i) => {
-                    const available = event.availableSeats ?? Math.max(event.maxCapacity - (event._count?.registrations ?? 0), 0);
-                    const seatInfo = getSeatStatus(available, event.maxCapacity);
-                    return (
-                      <article
-                        key={event.id}
-                        className="event-card"
-                        id={`event-${event.id}`}
-                        style={{ animationDelay: `${i * 60}ms` }}
-                      >
-                        <div className="event-card-header">
-                          <span className={`status-pill status-${event.status.toLowerCase()}`}>{event.status}</span>
-                          <div className="seats-indicator">
-                            <span className={`seats-dot ${seatInfo.class}`} />
-                            <span>{seatInfo.label}</span>
-                          </div>
-                        </div>
-                        <h3>{event.title}</h3>
-                        <p className="event-desc">{event.description}</p>
-                        <div className="event-meta-grid">
-                          <div className="event-meta-item">
-                            <span className="meta-label">📅 Date</span>
-                            <span className="meta-value">{formatDate(event.date)}</span>
-                          </div>
-                          <div className="event-meta-item">
-                            <span className="meta-label">📍 Venue</span>
-                            <span className="meta-value">{event.venue}</span>
-                          </div>
-                          <div className="event-meta-item">
-                            <span className="meta-label">👥 Capacity</span>
-                            <span className="meta-value">{event.maxCapacity}</span>
-                          </div>
-                        </div>
-                        <button
-                          className="btn btn-primary btn-full"
-                          disabled={
-                            loading ||
-                            session?.user.role !== 'STUDENT' ||
-                            event.status !== 'UPCOMING' ||
-                            Boolean(event.isFull)
-                          }
-                          onClick={() => void handleRegisterForEvent(event.id)}
-                        >
-                          {!session
-                            ? 'Sign in to register'
-                            : session.user.role !== 'STUDENT'
-                              ? 'Students only'
-                              : event.isFull
-                                ? 'Fully Booked'
-                                : event.status !== 'UPCOMING'
-                                  ? 'Registration closed'
-                                  : 'Register Now'}
-                        </button>
-                      </article>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
-          </>
-        )}
-
-        {/* === MY TICKETS PAGE (Student) === */}
-        {page === 'tickets' && session?.user.role === 'STUDENT' && (
-          <section className="tickets-section" id="tickets-section">
-            <div className="section-header">
-              <div>
-                <h2>
-                  <span className="section-icon">🎫</span> My Tickets
-                </h2>
-                <p className="section-subtitle">Your registered events and secure digital passes</p>
-              </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => void loadTickets(session.token)}>
-                ↻ Refresh
-              </button>
-            </div>
-
-            {tickets.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">🎟️</div>
-                <h4>No tickets yet</h4>
-                <p>Register for an upcoming event to get your digital pass.</p>
-              </div>
-            ) : (
-              <div className="ticket-grid">
-                {tickets.map((ticket) => (
-                  <article key={ticket.id} className="ticket-card" id={`ticket-${ticket.id}`}>
-                    <div className="ticket-event-info">
-                      <h4>{ticket.event.title}</h4>
-                      <p>
-                        📍 {ticket.event.venue} • 📅 {formatDate(ticket.event.date)}
-                      </p>
+                filteredEvents.map((event) => (
+                  <article key={event.id} className="event-card">
+                    <div className="event-card-top">
+                      <span className={`status-chip status-${event.status.toLowerCase()}`}>{event.status}</span>
+                      <span className="event-seat-count">{getAvailableSeats(event)} seats left</span>
                     </div>
-                    <div className="ticket-uuid">
-                      <span className="uuid-label">Ticket UUID</span>
-                      <code>{ticket.ticketUUID}</code>
+
+                    <div className="event-card-copy">
+                      <h4>{event.title}</h4>
+                      <p>{event.description}</p>
                     </div>
-                    <span className={`ticket-status ${ticket.attended ? 'checked-in' : 'active'}`}>
-                      {ticket.attended ? '✅ Checked In' : '🟢 Active'}
-                    </span>
+
+                    <div className="event-facts">
+                      <div>
+                        <span className="micro-label">Date</span>
+                        <strong>{formatDate(event.date)}</strong>
+                      </div>
+                      <div>
+                        <span className="micro-label">Venue</span>
+                        <strong>{event.venue}</strong>
+                      </div>
+                    </div>
+
+                    <div className="capacity-meter">
+                      <div className="capacity-track">
+                        <span style={{ width: `${getCapacityPercentage(event)}%` }} />
+                      </div>
+                      <div className="capacity-caption">
+                        <span>{event.maxCapacity - getAvailableSeats(event)} booked</span>
+                        <span>{event.maxCapacity} total</span>
+                      </div>
+                    </div>
+
+                    <button
+                      className="primary-button"
+                      disabled={loading || session?.user.role !== 'STUDENT' || event.status !== 'UPCOMING' || Boolean(event.isFull)}
+                      onClick={() => void handleRegisterForEvent(event.id)}
+                    >
+                      {session?.user.role === 'STUDENT' ? 'Claim ticket' : 'Login as student to book'}
+                    </button>
                   </article>
-                ))}
-              </div>
-            )}
-          </section>
-        )}
-
-        {/* === ORGANIZER DASHBOARD === */}
-        {page === 'organizer' && session?.user.role === 'ORGANIZER' && (
-          <section className="organizer-section" id="organizer-section">
-            {/* Create Event Form */}
-            <div className="section-header">
-              <div>
-                <h2>
-                  <span className="section-icon">➕</span> Create Event
-                </h2>
-                <p className="section-subtitle">Set up a new event with capacity management</p>
-              </div>
+                ))
+              )}
             </div>
+          </section>
 
-            <div className="create-event-form">
-              <div className="auth-card">
-                <form className="form-stack" onSubmit={handleCreateEvent} id="create-event-form">
-                  <div className="form-group">
-                    <label className="form-label">Event Title</label>
-                    <input
-                      className="form-input"
-                      id="event-title"
-                      value={eventForm.title}
-                      onChange={(e) => setEventForm((c) => ({ ...c, title: e.target.value }))}
-                      placeholder="e.g. Hackathon 2026"
-                      required
-                    />
+          {session?.user.role === 'STUDENT' && (
+            <section className="panel dashboard-panel">
+              <div className="panel-header">
+                <p className="section-tag">Student dashboard</p>
+                <h3 className="panel-title">Your ticket archive</h3>
+              </div>
+
+              <div className="ticket-wall">
+                {tickets.length === 0 ? (
+                  <div className="empty-panel">
+                    <h4>No active tickets yet</h4>
+                    <p>Register for an upcoming event and your secure UUID pass will appear here instantly.</p>
                   </div>
-                  <div className="form-group">
-                    <label className="form-label">Description</label>
-                    <textarea
-                      className="form-textarea"
-                      id="event-description"
-                      value={eventForm.description}
-                      onChange={(e) => setEventForm((c) => ({ ...c, description: e.target.value }))}
-                      placeholder="What's this event about?"
-                      required
-                    />
-                  </div>
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label className="form-label">Date & Time</label>
+                ) : (
+                  tickets.map((ticket) => (
+                    <article key={ticket.id} className="ticket-card">
+                      <div className="ticket-card-header">
+                        <div>
+                          <span className="section-tag">Digital pass</span>
+                          <h4>{ticket.event.title}</h4>
+                        </div>
+                        <span className={ticket.attended ? 'ticket-badge ticket-badge-used' : 'ticket-badge'}>
+                          {ticket.attended ? 'Checked in' : 'Ready'}
+                        </span>
+                      </div>
+
+                      <div className="ticket-card-grid">
+                        <div>
+                          <span className="micro-label">Venue</span>
+                          <strong>{ticket.event.venue}</strong>
+                        </div>
+                        <div>
+                          <span className="micro-label">Time</span>
+                          <strong>{formatDate(ticket.event.date)}</strong>
+                        </div>
+                      </div>
+
+                      <div className="ticket-code-block">
+                        <span className="micro-label">Ticket UUID</span>
+                        <code>{ticket.ticketUUID}</code>
+                      </div>
+                    </article>
+                  ))
+                )}
+              </div>
+            </section>
+          )}
+
+          {session?.user.role === 'ORGANIZER' && (
+            <>
+              <section className="panel dashboard-panel">
+                <div className="panel-header">
+                  <p className="section-tag">Organizer studio</p>
+                  <h3 className="panel-title">Launch a new event</h3>
+                </div>
+
+                <form className="editor-form" onSubmit={handleCreateEvent}>
+                  <div className="editor-grid">
+                    <label>
+                      <span className="micro-label">Event title</span>
                       <input
-                        className="form-input"
-                        id="event-date"
+                        value={eventForm.title}
+                        onChange={(event) => setEventForm((current) => ({ ...current, title: event.target.value }))}
+                        placeholder="Design Sprint Demo Day"
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span className="micro-label">Venue</span>
+                      <input
+                        value={eventForm.venue}
+                        onChange={(event) => setEventForm((current) => ({ ...current, venue: event.target.value }))}
+                        placeholder="Innovation Hall"
+                        required
+                      />
+                    </label>
+                    <label className="editor-span-2">
+                      <span className="micro-label">Description</span>
+                      <textarea
+                        value={eventForm.description}
+                        onChange={(event) => setEventForm((current) => ({ ...current, description: event.target.value }))}
+                        placeholder="Describe the audience, experience, and reason to attend."
+                        required
+                      />
+                    </label>
+                    <label>
+                      <span className="micro-label">Date and time</span>
+                      <input
                         value={eventForm.date}
-                        onChange={(e) => setEventForm((c) => ({ ...c, date: e.target.value }))}
+                        onChange={(event) => setEventForm((current) => ({ ...current, date: event.target.value }))}
                         type="datetime-local"
                         required
                       />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Venue</label>
+                    </label>
+                    <label>
+                      <span className="micro-label">Max capacity</span>
                       <input
-                        className="form-input"
-                        id="event-venue"
-                        value={eventForm.venue}
-                        onChange={(e) => setEventForm((c) => ({ ...c, venue: e.target.value }))}
-                        placeholder="e.g. Main Auditorium"
-                        required
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Max Capacity</label>
-                      <input
-                        className="form-input"
-                        id="event-capacity"
                         value={eventForm.maxCapacity}
-                        onChange={(e) => setEventForm((c) => ({ ...c, maxCapacity: Number(e.target.value) }))}
+                        onChange={(event) =>
+                          setEventForm((current) => ({
+                            ...current,
+                            maxCapacity: Number(event.target.value),
+                          }))
+                        }
                         type="number"
                         min="1"
                         required
                       />
-                    </div>
+                    </label>
                   </div>
-                  <button className="btn btn-primary" id="create-event-submit" disabled={loading}>
-                    ✨ Create Event
+                  <button className="primary-button" disabled={loading}>
+                    Publish event
+                  </button>
+                </form>
+              </section>
+
+              <section className="panel dashboard-panel">
+                <div className="panel-header">
+                  <p className="section-tag">Operations board</p>
+                  <h3 className="panel-title">Manage event lifecycle and registrations</h3>
+                </div>
+
+                <div className="organizer-stack">
+                  {myEvents.length === 0 ? (
+                    <div className="empty-panel">
+                      <h4>No organizer events yet</h4>
+                      <p>Create your first event above to unlock registration tracking and status controls.</p>
+                    </div>
+                  ) : (
+                    myEvents.map((event) => (
+                      <article key={event.id} className="managed-event">
+                        <div className="managed-event-header">
+                          <div>
+                            <span className="section-tag">Managed event</span>
+                            <h4>{event.title}</h4>
+                            <p>{event.venue}</p>
+                          </div>
+                          <span className={`status-chip status-${event.status.toLowerCase()}`}>{event.status}</span>
+                        </div>
+
+                        <div className="managed-event-stats">
+                          <div>
+                            <span className="micro-label">Registrations</span>
+                            <strong>{event._count?.registrations ?? 0}</strong>
+                          </div>
+                          <div>
+                            <span className="micro-label">Seats left</span>
+                            <strong>{getAvailableSeats(event)}</strong>
+                          </div>
+                          <div>
+                            <span className="micro-label">Date</span>
+                            <strong>{formatDate(event.date)}</strong>
+                          </div>
+                        </div>
+
+                        <div className="managed-controls">
+                          <label>
+                            <span className="micro-label">Status</span>
+                            <select
+                              value={statusDrafts[event.id] ?? event.status}
+                              onChange={(changeEvent) =>
+                                setStatusDrafts((current) => ({
+                                  ...current,
+                                  [event.id]: changeEvent.target.value as EventStatus,
+                                }))
+                              }
+                            >
+                              {eventStatusOptions.map((status) => (
+                                <option key={status} value={status}>
+                                  {status}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <button className="ghost-button" onClick={() => void handleStatusUpdate(event.id)}>
+                            Save status
+                          </button>
+                          <button className="ghost-button" onClick={() => void loadRegistrations(event.id)}>
+                            View registrations
+                          </button>
+                        </div>
+
+                        {registrationsByEvent[event.id] && (
+                          <div className="registration-sheet">
+                            {registrationsByEvent[event.id].length === 0 ? (
+                              <p className="empty-state">No registrations for this event yet.</p>
+                            ) : (
+                              registrationsByEvent[event.id].map((registration) => (
+                                <div key={registration.id} className="registration-row">
+                                  <div>
+                                    <strong>{registration.user.name}</strong>
+                                    <span>{registration.user.email}</span>
+                                  </div>
+                                  <code>{registration.ticketUUID}</code>
+                                  <span className="registration-status">
+                                    {registration.attended ? 'Attended' : 'Pending'}
+                                  </span>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        )}
+                      </article>
+                    ))
+                  )}
+                </div>
+              </section>
+
+              <section className="panel dashboard-panel">
+                <div className="panel-header">
+                  <p className="section-tag">Entry desk</p>
+                  <h3 className="panel-title">Run check-in without leaving the page</h3>
+                </div>
+
+                <form className="entry-form" onSubmit={handleCheckIn}>
+                  <label>
+                    <span className="micro-label">Select event</span>
+                    <select
+                      value={selectedCheckInEventId}
+                      onChange={(event) => setSelectedCheckInEventId(event.target.value)}
+                      required
+                    >
+                      <option value="">Choose event</option>
+                      {myEvents.map((event) => (
+                        <option key={event.id} value={event.id}>
+                          {event.title}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span className="micro-label">Ticket UUID</span>
+                    <input
+                      value={ticketUUID}
+                      onChange={(event) => setTicketUUID(event.target.value)}
+                      placeholder="Paste attendee ticket UUID"
+                      required
+                    />
+                  </label>
+
+                  <button className="primary-button" disabled={loading || !selectedCheckInEventId}>
+                    Confirm check-in
+                  </button>
+                </form>
+              </section>
+            </>
+          )}
+        </section>
+
+        <aside className="sidebar-column">
+          <section className="panel sidebar-panel">
+            <div className="panel-header">
+              <p className="section-tag">Access</p>
+              <h3 className="panel-title">Student and organizer login</h3>
+            </div>
+
+            {!session ? (
+              <div className="auth-stack">
+                <form className="auth-card" onSubmit={handleRegisterSubmit}>
+                  <div>
+                    <span className="micro-label">New to EventPass?</span>
+                    <h4>Create account</h4>
+                  </div>
+                  <input
+                    value={registerForm.name}
+                    onChange={(event) => setRegisterForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Full name"
+                    required
+                  />
+                  <input
+                    value={registerForm.email}
+                    onChange={(event) => setRegisterForm((current) => ({ ...current, email: event.target.value }))}
+                    placeholder="Email"
+                    type="email"
+                    required
+                  />
+                  <input
+                    value={registerForm.password}
+                    onChange={(event) =>
+                      setRegisterForm((current) => ({ ...current, password: event.target.value }))
+                    }
+                    placeholder="Password"
+                    type="password"
+                    required
+                  />
+                  <select
+                    value={registerForm.role}
+                    onChange={(event) =>
+                      setRegisterForm((current) => ({
+                        ...current,
+                        role: event.target.value as Role,
+                      }))
+                    }
+                  >
+                    <option value="STUDENT">Student</option>
+                    <option value="ORGANIZER">Organizer</option>
+                  </select>
+                  <button className="primary-button" disabled={loading}>
+                    Create account
+                  </button>
+                </form>
+
+                <form className="auth-card auth-card-contrast" onSubmit={handleLoginSubmit}>
+                  <div>
+                    <span className="micro-label">Already registered?</span>
+                    <h4>Sign in</h4>
+                  </div>
+                  <input
+                    value={loginForm.email}
+                    onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
+                    placeholder="Email"
+                    type="email"
+                    required
+                  />
+                  <input
+                    value={loginForm.password}
+                    onChange={(event) =>
+                      setLoginForm((current) => ({ ...current, password: event.target.value }))
+                    }
+                    placeholder="Password"
+                    type="password"
+                    required
+                  />
+                  <button className="primary-button" disabled={loading}>
+                    Login
                   </button>
                 </form>
               </div>
-            </div>
-
-            {/* Managed Events */}
-            <div className="section-header">
-              <div>
-                <h2>
-                  <span className="section-icon">📋</span> Managed Events
-                </h2>
-                <p className="section-subtitle">View registrations and update event status</p>
-              </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => void loadMyEvents(session.token)}>
-                ↻ Refresh
-              </button>
-            </div>
-
-            {myEvents.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-icon">📭</div>
-                <h4>No events created yet</h4>
-                <p>Use the form above to create your first event.</p>
-              </div>
             ) : (
-              <div className="managed-events-list">
-                {myEvents.map((event) => (
-                  <article key={event.id} className="managed-event-card" id={`managed-${event.id}`}>
-                    <div className="managed-event-top">
-                      <div className="managed-event-info">
-                        <h4>{event.title}</h4>
-                        <p>📍 {event.venue} • 📅 {formatDate(event.date)}</p>
-                        <div className="managed-event-stats">
-                          <div className="managed-stat">
-                            <span className="stat-value">{event._count?.registrations ?? 0}</span>
-                            <span className="stat-label">Registered</span>
-                          </div>
-                          <div className="managed-stat">
-                            <span className="stat-value">{event.availableSeats ?? 0}</span>
-                            <span className="stat-label">Seats Left</span>
-                          </div>
-                          <div className="managed-stat">
-                            <span className="stat-value">{event.maxCapacity}</span>
-                            <span className="stat-label">Capacity</span>
-                          </div>
-                        </div>
-                      </div>
-                      <span className={`status-pill status-${event.status.toLowerCase()}`}>{event.status}</span>
-                    </div>
-
-                    <div className="managed-event-actions">
-                      <select
-                        value={statusDrafts[event.id] ?? event.status}
-                        onChange={(e) =>
-                          setStatusDrafts((c) => ({ ...c, [event.id]: e.target.value as EventStatus }))
-                        }
-                      >
-                        {eventStatusOptions.map((s) => (
-                          <option key={s} value={s}>
-                            {s}
-                          </option>
-                        ))}
-                      </select>
-                      <button className="btn btn-ghost btn-sm" onClick={() => void handleStatusUpdate(event.id)}>
-                        Save Status
-                      </button>
-                      <button className="btn btn-ghost btn-sm" onClick={() => void loadRegistrations(event.id)}>
-                        View Registrations
-                      </button>
-                    </div>
-
-                    {registrationsByEvent[event.id] && (
-                      <div className="registrations-panel">
-                        {registrationsByEvent[event.id].length === 0 ? (
-                          <div className="empty-state" style={{ padding: '24px' }}>
-                            <p>No registrations yet for this event.</p>
-                          </div>
-                        ) : (
-                          registrationsByEvent[event.id].map((reg) => (
-                            <div key={reg.id} className="registration-row">
-                              <div className="reg-user">
-                                <strong>{reg.user.name}</strong>
-                                <span>{reg.user.email}</span>
-                              </div>
-                              <code>{reg.ticketUUID}</code>
-                              <span className={`reg-status ${reg.attended ? 'attended' : 'pending'}`}>
-                                {reg.attended ? '✅ Attended' : '⏳ Pending'}
-                              </span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
-                  </article>
-                ))}
+              <div className="session-panel">
+                <div className="session-avatar">{session.user.name.slice(0, 1).toUpperCase()}</div>
+                <div>
+                  <span className="micro-label">Active account</span>
+                  <h4>{session.user.name}</h4>
+                  <p>{session.user.email}</p>
+                </div>
+                <div className="session-role-chip">{session.user.role}</div>
+                <button className="ghost-button" onClick={handleLogout}>
+                  Logout
+                </button>
               </div>
             )}
           </section>
-        )}
 
-        {/* === CHECK-IN PAGE (Organizer) === */}
-        {page === 'checkin' && session?.user.role === 'ORGANIZER' && (
-          <section className="checkin-section" id="checkin-section">
-            <div className="section-header">
-              <div>
-                <h2>
-                  <span className="section-icon">✅</span> Check-In Portal
-                </h2>
-                <p className="section-subtitle">Verify and validate ticket entry using UUID</p>
-              </div>
+          <section className="panel sidebar-panel sidebar-panel-dark">
+            <div className="panel-header">
+              <p className="section-tag">How it feels</p>
+              <h3 className="panel-title">A calmer workflow for real event days</h3>
             </div>
 
-            <div className="checkin-card">
-              <h3>Verify Attendee</h3>
-              <p className="checkin-subtitle">
-                Select an event and paste the student's ticket UUID to mark them as attended.
-              </p>
-              <form className="form-stack" onSubmit={handleCheckIn} id="checkin-form">
-                <div className="form-group">
-                  <label className="form-label">Select Event</label>
-                  <select
-                    className="form-select"
-                    id="checkin-event"
-                    value={selectedCheckInEventId}
-                    onChange={(e) => setSelectedCheckInEventId(e.target.value)}
-                    required
-                  >
-                    <option value="">Choose an event...</option>
-                    {myEvents.map((event) => (
-                      <option key={event.id} value={event.id}>
-                        {event.title}
-                      </option>
-                    ))}
-                  </select>
+            <div className="story-list">
+              <article>
+                <span className="story-step">01</span>
+                <div>
+                  <h4>Students discover faster</h4>
+                  <p>Search, scan status, and claim a pass without hunting through forms and messages.</p>
                 </div>
-                <div className="form-group">
-                  <label className="form-label">Ticket UUID</label>
-                  <input
-                    className="form-input"
-                    id="checkin-uuid"
-                    value={ticketUUID}
-                    onChange={(e) => setTicketUUID(e.target.value)}
-                    placeholder="Paste the ticket UUID here"
-                    required
-                  />
+              </article>
+              <article>
+                <span className="story-step">02</span>
+                <div>
+                  <h4>Organizers stay in control</h4>
+                  <p>Capacity, registrations, and lifecycle status all live in a single dashboard.</p>
                 </div>
-                <button
-                  className="btn btn-success btn-full"
-                  id="checkin-submit"
-                  disabled={loading || !selectedCheckInEventId}
-                >
-                  ✅ Check In Attendee
-                </button>
-              </form>
+              </article>
+              <article>
+                <span className="story-step">03</span>
+                <div>
+                  <h4>Check-in stays clean</h4>
+                  <p>Ticket UUID verification keeps entry fast and reduces confusion at the gate.</p>
+                </div>
+              </article>
             </div>
           </section>
-        )}
+        </aside>
       </main>
-
-      {/* ---- TOAST ---- */}
-      {toast.visible && (
-        <div className="toast" id="toast-message">
-          <span className="toast-icon">💬</span>
-          <span>{toast.message}</span>
-          <button className="toast-close" onClick={() => setToast((t) => ({ ...t, visible: false }))}>
-            ✕
-          </button>
-        </div>
-      )}
     </div>
   );
 }
